@@ -14,58 +14,64 @@ inline constexpr float32_t saturate(const float32_t val, const float32_t min, co
 }
 
 void SVPWM_Calc(const AB * const ref, const float32_t vdc, UVW * const duty) {
-	constexpr float32_t fracPi3 = M_PI / 3;		// hope it makes "sector" < 6.
-	constexpr float32_t frac_2_root3 = 2 / 1.73205080756887729352f;
-
 	float32_t arg = atan2f(ref->B, ref->A);
+	if(arg < 0.0f) arg += (float32_t)(2.0f * M_PI);
 	float32_t mod = sqrtf((ref->A * ref->A) + (ref->B * ref->B)) / vdc;
+	//std::cout << "arg: " << arg << ", mod: " << mod << "; ";
 
-	int sector = arg / fracPi3;
-    float32_t alpha = arg - (fracPi3 * sector);
+	    GPIOB->BSRR = GPIO_BSRR_BS_2;
 
-	float32_t ta = mod * frac_2_root3 * arm_sin_f32(fracPi3 - alpha);
-	float32_t tb = mod * frac_2_root3 * arm_sin_f32(alpha);
+	int sector = arg * (float32_t)(3.0f / M_PI);
+    float32_t alpha = arg - (sector * (float32_t)(M_PI / 3.0f));
+	// map [0:pi/3) -> [0:128) in float
+    float32_t findex = alpha * (SvpwmTableLength * (float32_t)(3.0f / M_PI));
+    if (findex >= (float32_t)SvpwmTableLength) findex -= (float32_t)SvpwmTableLength;
+    int index = ((uint16_t)findex) & 0x7f;
+    float32_t fract = findex - (float32_t)index;
+	//std::cout << "arg: " << alpha << ", index: " << index << "; ";
 
-	float32_t t0 = 0.5f - ta/2 - tb/2;	// T_0/2
-	//float32_t t1 = t0 + ta;				// T_0/2 + T_a
-	//float32_t t2 = t0 + tb;				// T_0/2 + T_b
-	//float32_t t3 = 1.0f - t0;			// T_0/2 + T_a + T_b
+	auto a = SvpwmTable[index];
+	auto b = SvpwmTable[index + 1];
+
+	float32_t ta = mod * ((1.0f-fract)*a[0] + fract*b[0]);
+	float32_t tb = mod * ((1.0f-fract)*a[1] + fract*b[1]);
 
 	UVW shadow;
 
 	if (sector == 0) {
-		shadow->U = t0;	// T_0/2
-		shadow->V = t0 + tb;				// T_0/2 + T_b
-		shadow->W = 1.0f - t0;			// T_0/2 + T_a + T_b
+		shadow.U = 0.0f;	// T_0/2
+		shadow.V = tb;				// T_0/2 + T_b
+		shadow.W = ta + tb;			// T_0/2 + T_a + T_b
 	} else if (sector == 1) {
-		shadow->U = t0;	// T_0/2
-		shadow->V = 1.0f - t0;			// T_0/2 + T_a + T_b
-		shadow->W = t0 + ta;				// T_0/2 + T_a
+		shadow.U = 0.0f;	// T_0/2
+		shadow.V = ta + tb;			// T_0/2 + T_a + T_b
+		shadow.W = ta;				// T_0/2 + T_a
 	} else if (sector == 2) {
-		shadow->U = t0 + tb;				// T_0/2 + T_b
-		shadow->V = 1.0f - t0;			// T_0/2 + T_a + T_b
-		shadow->W = t0;	// T_0/2
+		shadow.U = tb;				// T_0/2 + T_b
+		shadow.V = ta + tb;			// T_0/2 + T_a + T_b
+		shadow.W = 0.0f;	// T_0/2
 	} else if (sector == 3) {
-		shadow->U = 1.0f - t0;			// T_0/2 + T_a + T_b
-		shadow->V = t0 + ta;				// T_0/2 + T_a
-		shadow->W = t0;	// T_0/2
+		shadow.U = ta + tb;			// T_0/2 + T_a + T_b
+		shadow.V = ta;				// T_0/2 + T_a
+		shadow.W = 0.0f;	// T_0/2
 	} else if (sector == 4) {
-		shadow->U = 1.0f - t0;			// T_0/2 + T_a + T_b
-		shadow->V = t0;	// T_0/2
-		shadow->W = t0 + tb;				// T_0/2 + T_b
+		shadow.U = ta + tb;			// T_0/2 + T_a + T_b
+		shadow.V = 0.0f;	// T_0/2
+		shadow.W = tb;				// T_0/2 + T_b
 	} else if (sector == 5) {
-		shadow->U = t0 + ta;				// T_0/2 + T_a
-		shadow->V = t0;	// T_0/2
-		shadow->W = 1.0f - t0;			// T_0/2 + T_a + T_b
+		shadow.U = ta;				// T_0/2 + T_a
+		shadow.V = 0.0f;	// T_0/2
+		shadow.W = ta + tb;			// T_0/2 + T_a + T_b
 	} else {
-		shadow->U = 0.0f;
-		shadow->V = 0.0f;
-		shadow->W = 0.0f;
+		shadow.U = 0.0f;
+		shadow.V = 0.0f;
+		shadow.W = 0.0f;
 	}
 
-    duty->U = saturate(shadow->U, 0.0f, 1.0f);
-    duty->V = saturate(shadow->V, 0.0f, 1.0f);
-    duty->W = saturate(shadow->W, 0.0f, 1.0f);
+    duty->U = saturate(shadow.U, 0.0f, 1.0f);
+    duty->V = saturate(shadow.V, 0.0f, 1.0f);
+    duty->W = saturate(shadow.W, 0.0f, 1.0f);
+    GPIOB->BSRR = GPIO_BSRR_BR_2;
 }
 /*
 void SVPWM_Calc(q31_t theta, q31_t modFactor, UVW *duty) {

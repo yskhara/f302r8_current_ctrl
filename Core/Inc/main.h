@@ -103,6 +103,26 @@ void Error_Handler(void);
 #endif
 /* USER CODE BEGIN Private defines */
 
+extern volatile uint32_t Tick_ms;
+void Delay_ms(uint32_t delay_ms);
+
+extern uint16_t uhVDDA;
+extern uint16_t aAdcOffset[3];
+
+void Adc1DmaTransferComplete_Callback(void);
+void Adc1InjConvComplete_Callback(void);
+void Tim1UpdateCallback(void);
+void Tim2CC1Callback(void);
+void Tim6UpdateCallback(void);
+
+#define ADC_CONVERTED_DATA_BUFFER_SIZE   ((uint32_t)   4)
+extern volatile uint16_t aADC1ConvertedData[ADC_CONVERTED_DATA_BUFFER_SIZE];
+
+/* Variable to report status of DMA transfer of ADC group regular conversions */
+/*  0: DMA transfer is not completed                                          */
+/*  1: DMA transfer is completed                                              */
+/*  2: DMA transfer has not been started yet (initial state)                  */
+extern volatile uint8_t ubAdc1DmaTransferCplt; /* Variable set into DMA interruption callback */
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

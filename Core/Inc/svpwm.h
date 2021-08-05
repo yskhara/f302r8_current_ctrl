@@ -19,7 +19,7 @@ extern const float32_t SvpwmTable[SvpwmTableLength + 1][2];
 extern "C" {
 #endif
 
-void SVPWM_Calc(const DQ * const dq, UVW * const duty);
+void SVPWM_Calc(const AB * const ref, const float32_t vdc, UVW * const duty);
 //void SVPWM_Calc(q31_t theta, q31_t modFactor, UVW *duty);
 
 
