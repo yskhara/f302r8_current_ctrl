@@ -128,7 +128,7 @@ void ConfigureADC1 (void)
 
 uint16_t ADC_Self_Cal_Channel (uint32_t channel)
 {
-    const uint16_t ubPowNbConvSelfCal = 2;
+    const uint16_t ubPowNbConvSelfCal = 4;
     uint16_t ubConvIdx = 0;
     int uwAdcAccum = 0;
 
@@ -137,14 +137,23 @@ uint16_t ADC_Self_Cal_Channel (uint32_t channel)
     LL_ADC_REG_SetSequencerRanks (ADC1, LL_ADC_REG_RANK_1, channel);
     LL_ADC_SetChannelSamplingTime (ADC1, channel, LL_ADC_SAMPLINGTIME_601CYCLES_5);
 
-    ubAdc1DmaTransferCplt = 0;
+    //ubAdc1DmaTransferCplt = 0;
     for (ubConvIdx = 0; ubConvIdx < (1u << ubPowNbConvSelfCal); ubConvIdx++)
     {
+        //prints ("converting...");
         LL_ADC_REG_StartConversion (ADC1);
-        while (ubAdc1DmaTransferCplt == 0)
+        //ADC1->CR |= ADC_CR_ADSTART;
+        //while (ubAdc1DmaTransferCplt == 0)
+        //do
+        //{
+        //    prints (".");
+        //    __NOP();
+        //}
+        while (LL_ADC_REG_IsConversionOngoing(ADC1) != 0)
             ;
-        ubAdc1DmaTransferCplt = 0;
-        uwAdcAccum += aADC1ConvertedData[0];
+        //ubAdc1DmaTransferCplt = 0;
+        uwAdcAccum += LL_ADC_REG_ReadConversionData12(ADC1);
+        //prints ("done.\r\n");
     }
     return uwAdcAccum >> ubPowNbConvSelfCal;
 }
@@ -173,11 +182,11 @@ void ADC_SelfCal (void)
     LL_ADC_REG_SetOverrun (ADC1, LL_ADC_REG_OVR_DATA_OVERWRITTEN);
 
     // configure DMA
-    LL_DMA_ConfigAddresses (DMA1, LL_DMA_CHANNEL_1, LL_ADC_DMA_GetRegAddr (ADC1, LL_ADC_DMA_REG_REGULAR_DATA), (uint32_t) &aADC1ConvertedData, LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
-    LL_DMA_SetDataLength (DMA1, LL_DMA_CHANNEL_1, 1);
-    LL_DMA_EnableIT_TC (DMA1, LL_DMA_CHANNEL_1);
-    LL_DMA_EnableIT_TE (DMA1, LL_DMA_CHANNEL_1);
-    LL_DMA_EnableChannel (DMA1, LL_DMA_CHANNEL_1);
+    //LL_DMA_ConfigAddresses (DMA1, LL_DMA_CHANNEL_1, LL_ADC_DMA_GetRegAddr (ADC1, LL_ADC_DMA_REG_REGULAR_DATA), (uint32_t) &aADC1ConvertedData, LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
+    //LL_DMA_SetDataLength (DMA1, LL_DMA_CHANNEL_1, 1);
+    //LL_DMA_EnableIT_TC (DMA1, LL_DMA_CHANNEL_1);
+    //LL_DMA_EnableIT_TE (DMA1, LL_DMA_CHANNEL_1);
+    //LL_DMA_EnableChannel (DMA1, LL_DMA_CHANNEL_1);
 
     LL_ADC_StartCalibration (ADC1, LL_ADC_SINGLE_ENDED);
     while (LL_ADC_IsCalibrationOnGoing (ADC1) != 0)
@@ -187,7 +196,7 @@ void ADC_SelfCal (void)
     while (LL_ADC_IsActiveFlag_ADRDY (ADC1) == 0)
         ; // wait until adc is ready
 
-    Delay_ms (100);
+    //Delay_ms (100);
 
     // Calibrate VDDA
     uhVDDA = __LL_ADC_CALC_VREFANALOG_VOLTAGE(ADC_Self_Cal_Channel(LL_ADC_CHANNEL_VREFINT), LL_ADC_RESOLUTION_12B);
@@ -228,7 +237,7 @@ void ConfigureADCNormal (void)
     LL_DMA_ConfigAddresses (DMA1, LL_DMA_CHANNEL_1, LL_ADC_DMA_GetRegAddr (ADC1, LL_ADC_DMA_REG_REGULAR_DATA), (uint32_t) &aADC1ConvertedData, LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
     LL_DMA_SetDataLength (DMA1, LL_DMA_CHANNEL_1, ADC_CONVERTED_DATA_BUFFER_SIZE);
     LL_DMA_EnableIT_TC (DMA1, LL_DMA_CHANNEL_1);
-    LL_DMA_EnableIT_TE (DMA1, LL_DMA_CHANNEL_1);
+    //LL_DMA_EnableIT_TE (DMA1, LL_DMA_CHANNEL_1);
     LL_DMA_EnableChannel (DMA1, LL_DMA_CHANNEL_1);
 
     // Enable ADC

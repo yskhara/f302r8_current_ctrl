@@ -25,6 +25,7 @@
 #include <stdio.h>
 
 #include "svpwm.h"
+#include "atan.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -74,11 +75,11 @@ ConfigureDMA (void);
 /* USER CODE BEGIN 0 */
 
 volatile uint32_t Tick_ms = 0;
-void Delay_ms (uint32_t delay_ms)
+void Delay_ms (const uint32_t delay_ms)
 {
     Tick_ms = 0;
     while (Tick_ms < delay_ms)
-        ;
+        __NOP();
 }
 
 float sinePeriodFiltered = 0;
@@ -86,13 +87,23 @@ uint32_t hallCounter = 0;
 uint8_t hallCounterChanged = 0;
 //float theta_hall = 0.0f;
 float32_t Omega = 0.0f;  // in rad/s
+float32_t OmegaCnt = 0.0f;  // in rad/count
+float32_t OmegaCntFiltered = 0.0f;  // in rad/count
 //float32_t gfOmegaDt = 0;
 float32_t Theta = 0;		// in range [-pi:pi]
 float32_t ThetaHall = 0;
 uint8_t hall_pattern = 0x00;
 //float theta_at_edge[] = { 0, 2.0 * M_PI / 3.0, M_PI / 3.0, -2.0 * M_PI / 3.0, -M_PI / 3.0, M_PI };
 float32_t ThetaAtEdge[] =
-    { 0.0f, 0.0f, 2.0f * M_PI / 3.0f, M_PI / 3.0f, -2.0f * M_PI / 3.0f, -M_PI / 3.0f, -M_PI };
+    {
+        0.0f,
+        0.0f,
+        2.0f * M_PI / 3.0f,
+        M_PI / 3.0f,
+        -2.0f * M_PI / 3.0f,
+        -M_PI / 3.0f,
+        -M_PI
+    };
 uint8_t gaubHallPatternSector[] =
     { 0, 0, 2, 1, 4, 5, 3 };
 int8_t gabHallDirectionTable[6][6] =
@@ -154,65 +165,53 @@ void Tim2CC1Callback (void)
     gubHallPatternPrev = gubHallPatternCurrent;
     hall_pattern = ((GPIOA->IDR & GPIO_IDR_15) >> 13) | ((GPIOB->IDR & GPIO_IDR_3) >> 2) | ((GPIOB->IDR & GPIO_IDR_10) >> 10);
     gubHallPatternCurrent = gaubHallPatternSector[hall_pattern];
-    Omega = (72e6 * M_PI / 3.0f) / hallCounter;
+
+    if(hallCounter == 0) return;
+
+    Omega = (float32_t)(72e6 * M_PI / 3.0f) / (float32_t)hallCounter;
     //float32_t fOmegaDt = 1e-3 / 3.0f * 72e6 / hallCounter;
+    OmegaCnt = ((float32_t)M_PI / 3.0f) / (float32_t)hallCounter;
 
     //gfOmega *= gabHallDirectionTable[gubHallPatternPrev][gubHallPatternCurrent];
-    Omega *= gabHallDirectionTable[gubHallPatternPrev][gubHallPatternCurrent];
+    Omega *= (float32_t)gabHallDirectionTable[gubHallPatternPrev][gubHallPatternCurrent];
+    OmegaCnt *= (float32_t)gabHallDirectionTable[gubHallPatternPrev][gubHallPatternCurrent];
 
     //arm_float_to_q31(&fOmegaDt, &gqwOmegaDt, 1);
+
+    //constexpr float32_t
     ThetaHall = ThetaAtEdge[hall_pattern];
     //gqwTheta = gqwThetaHall;
 }
 
+volatile float32_t OmegaRef = 0.0f;//5.0f*314.16f;
+volatile DQ iref = {0.0f, 0.0f}; //ampere
+
 void Tim6UpdateCallback (void)
 {
-    return;
     GPIOB->BSRR = GPIO_BSRR_BS_2;
-    //q31_t qwOmegaDt = 0;
-    //float fOmegaDt = omega / M_PI * 1e-3;
-    //arm_float_to_q31(&fOmegaDt, &qwOmegaDt, 1);
-    //gqwTheta += gqwOmegaDt;
-    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, (gqwTheta >> 20) ^ 0x800);
-    //q31_t qwThetaRT = gqwThetaHall + Q31(gfOmega * TIM2->CNT);
-    Theta += 0.03f * M_PI;
 
-    if (Theta < -M_PI)
-        Theta += 2 * M_PI;
-    else if (Theta > M_PI)
-        Theta -= 2 * M_PI;
+    constexpr float32_t ts = 1.0f / 1800.0f;
+    constexpr float32_t ti = 0.01f;
+    constexpr float32_t kp = 1.0f;
+    constexpr float32_t i_lim = 2.0f;
 
-    float32_t ThetaRT = Theta;
-    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, (qwThetaRT >> 20) ^ 0x800);
+    volatile DQ iref_shadow = {0.0f, 0.0f}; //ampere
+    float32_t OmegaErr = OmegaRef - (OmegaCntFiltered* 72e6f);
+    static float32_t OmegaErrPrev = 0.0f;
+    iref_shadow.D = 0.0f;
+    iref_shadow.Q += kp * ( (1 + ts/ti) * OmegaErr - OmegaErrPrev);
+    OmegaErrPrev = OmegaErr;
 
-    //float32_t qwAdv = 0.7 * M_PI;
-    //q31_t qwSines[3];
-    //q31_t dummy;
+    //if(iref.D < -i_lim) uref.D = -i_lim;
+    //if(iref.D > i_lim) uref.D = i_lim;
+    if(iref_shadow.Q < -i_lim) iref_shadow.Q = -i_lim;
+    if(iref_shadow.Q > i_lim) iref_shadow.Q = i_lim;
 
-    //arm_sin_cos_q31(qwThetaRT + qwAdv, &qwSines[0], &dummy);
-    //arm_sin_cos_q31(qwThetaRT + Q31(2.0f / 3.0f) + qwAdv, &qwSines[1], &dummy);
-    //arm_sin_cos_q31(qwThetaRT - Q31(2.0f / 3.0f) + qwAdv, &qwSines[2], &dummy);
+    iref.D = iref_shadow.D;
+    iref.Q = -iref_shadow.Q;    // i don't know why (yet) but the sign is inverted.
 
-    UVW uvw;
-    AB ab;
-    ab.A = arm_cos_f32 (Theta);
-    ab.B = arm_sin_f32 (Theta);
-    SVPWM_Calc (&ab, 5.0f, &uvw);
+    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, (1000.0f * iref.Q) + 2048);
 
-    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, (qwSines[0] >> 20) ^ 0x800);
-    LL_DAC_ConvertData12RightAligned (DAC1, LL_DAC_CHANNEL_1, uvw.V * 16000.0f);
-
-    //if (GPIOC->IDR & GPIO_IDR_13 != 0) {
-//			TIM1->CCR1 = 1800.0 * sin(theta + adv);
-//			TIM1->CCR2 = 1800.0 * sin(theta + 2.0 * M_PI / 3.0 + adv);
-//			TIM1->CCR3 = 1800.0 * sin(theta - 2.0 * M_PI / 3.0 + adv);
-    //TIM1->CCR1 = 500.0 + (int32_t)qwSines[0] * (100.0/0x80000000);
-    //TIM1->CCR2 = 500.0 + (int32_t)qwSines[1] * (100.0/0x80000000);
-    //TIM1->CCR3 = 500.0 + (int32_t)qwSines[2] * (100.0/0x80000000);
-    TIM1->CCR1 = uvw.U * 1000.0f;
-    TIM1->CCR2 = uvw.V * 1000.0f;
-    TIM1->CCR3 = uvw.W * 1000.0f;
-    //}
     GPIOB->BSRR = GPIO_BSRR_BR_2;
 }
 
@@ -221,42 +220,129 @@ void Adc1DmaTransferComplete_Callback (void)
     ubAdc1DmaTransferCplt = 1;
 }
 
+constexpr uint16_t SanitizeDuty (const float32_t val, const uint16_t arr, const uint16_t max)
+{
+    uint16_t ccr = val * (float32_t)arr;
+    if (ccr < 0)
+        return 0;
+    else if (ccr > max)
+        return max;
+    else
+        return ccr;
+}
+
+float32_t id_accum[2] = {0.0f, 0.0f};
+float32_t iq_accum[2] = {0.0f, 0.0f};
+
+constexpr float32_t CurrentSenseMultiplier = 1.9836983471074379f / 1000.0f;       // [A/mV]
+float32_t FilterOmegaCoeff[5] = {0.0200834f, 0.0401667f, 0.0200834f, 1.5610181f, -0.6413515f};
+float32_t FilterOmegaState[2];
+const arm_biquad_cascade_df2T_instance_f32 FilterOmegaInst = {1, FilterOmegaState, FilterOmegaCoeff};
+
 void Adc1InjConvComplete_Callback (void)
 {
 //	qwPhaseCurrent[0] = (uint32_t)(ADC1->JDR1) << 16;
 //	qwPhaseCurrent[1] = ADC1->JDR2 << 16;
 //	qwPhaseCurrent[2] = ADC1->JDR3 << 16;
 
-    PhaseCurrent[0] = (float32_t)uhVDDA * (int16_t)ADC1->JDR1 / 4096.0f;
-    PhaseCurrent[1] = (float32_t)uhVDDA * (int16_t)ADC1->JDR2 / 4096.0f;
+    PhaseCurrent[0] = (float32_t)(uhVDDA * (int16_t)ADC1->JDR1) * (-CurrentSenseMultiplier / 4096.0f);           // sign: source positive
+    PhaseCurrent[1] = (float32_t)(uhVDDA * (int16_t)ADC1->JDR2) * (-CurrentSenseMultiplier / 4096.0f);
     //PhaseCurrent[1] = __LL_ADC_CALC_DATA_TO_VOLTAGE(uhVDDA, (int16_t)ADC1->JDR2, LL_ADC_RESOLUTION_12B);
-    LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, PhaseCurrent[0] + 2048);
+    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, 4.0f * PhaseCurrent[0] + 2048);
 
 
-    Theta += 0.008f * M_PI;
+    arm_biquad_cascade_df2T_f32(&FilterOmegaInst, &OmegaCnt, &OmegaCntFiltered, 1);
+    //Theta += 0.001f * (float32_t)M_PI;
+    Theta = ThetaHall + (OmegaCntFiltered * (float32_t)TIM2->CNT);
 
-    if (Theta < -M_PI)
-        Theta += 2 * M_PI;
-    else if (Theta > M_PI)
-        Theta -= 2 * M_PI;
-    //q31_t qwThetaRT = gqwThetaHall + Q31(gfOmega * TIM2->CNT);
+    if (Theta < (float32_t)(-M_PI))
+        Theta += (float32_t)(2.0f * M_PI);
+    else if (Theta > (float32_t)M_PI)
+        Theta -= (float32_t)(2.0f * M_PI);
 
     //q31_t qwSin, qwCos;
     //arm_sin_cos_f32(gqwTheta, &qwSin, &qwCos);
+    float32_t arg = Theta;// - (float32_t)(2.0f * M_PI/ 3.0f);
+    float32_t sinval = arm_sin_f32 (arg);
+    float32_t cosval = arm_cos_f32 (arg);
+
+    float32_t id, iq;
+
+    CurrentAB.A = - PhaseCurrent[0] - PhaseCurrent[1];
+    CurrentAB.B = (1.0f / 1.7320508075688772f) * PhaseCurrent[0] - (1.0f / 1.7320508075688772f) * PhaseCurrent[1];
+
     //arm_clarke_f32 (PhaseCurrent[0], PhaseCurrent[1], &(CurrentAB.A), &(CurrentAB.B));
-    //arm_park_f32 (CurrentAB.A, CurrentAB.B, &(CurrentDQ.D), &(CurrentDQ.Q), arm_sin_f32 (Theta), arm_cos_f32 (Theta));
+    arm_park_f32 (CurrentAB.A, CurrentAB.B, &id, &iq, sinval, cosval);
 
-    UVW uvw;
-    AB ab;
-    ab.A = arm_cos_f32 (Theta);
-    ab.B = arm_sin_f32 (Theta);
-    SVPWM_Calc (&ab, 5.0f, &uvw);
+    constexpr float32_t b0 = 0.0200834f;
+    constexpr float32_t b1 = 0.0401667f;
+    constexpr float32_t b2 = 0.0200834f;
+    constexpr float32_t a1 = -1.5610181f;
+    constexpr float32_t a2 = 0.6413515f;
 
-    //LL_DAC_ConvertData12RightAligned (DAC1, LL_DAC_CHANNEL_1, uvw.V * 16000.0f);
+    CurrentDQ.D = b0 * id + id_accum[0];
+    id_accum[0] = b1 * id - a1 * CurrentDQ.D + id_accum[1];
+    id_accum[1] = b2 * id - a2 * CurrentDQ.D;
+    CurrentDQ.Q = b0 * iq + iq_accum[0];
+    iq_accum[0] = b1 * iq - a1 * CurrentDQ.Q + iq_accum[1];
+    iq_accum[1] = b2 * iq - a2 * CurrentDQ.Q;
 
-    TIM1->CCR1 = uvw.U * 1000.0f;
-    TIM1->CCR2 = uvw.V * 1000.0f;
-    TIM1->CCR3 = uvw.W * 1000.0f;
+    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, (1000.0f * CurrentAB.A) + 2048);
+    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, (1000.0f * CurrentDQ.Q) + 2048);
+    LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, (400.0f * Theta) + 2048);
+    //LL_DAC_ConvertData12RightAligned(DAC1, LL_DAC_CHANNEL_1, 1000.0f * cosval + 2048);
+
+    constexpr float32_t ts = 1.0f / 36000.0f;
+    constexpr float32_t ti = 0.01f;
+    constexpr float32_t kp = 1.0f;
+    constexpr float32_t vdc = 19.0f;    // volts
+
+    constexpr float32_t rs = 0.12; // stator resistance in [Ohm]
+    constexpr float32_t ls = 12e-6f; //stator inductance in [H]
+    constexpr float32_t ke = 1e-3f; // Back-EMF constant in [V/(rad/s)]. Note rad/s part is electrical angle.
+    static DQ uref = {0.0f, 0.0f};
+    static float32_t iderr_prev = 0.0f;
+    static float32_t iqerr_prev = 0.0f;
+
+    //DQ iref = {0.0f, -0.15f}; //ampere
+    float32_t iderr = iref.D - CurrentDQ.D;
+    float32_t iqerr = iref.Q - CurrentDQ.Q;
+    uref.D += kp * ( (1 + ts/ti) * iderr - iderr_prev);
+    uref.Q += kp * ( (1 + ts/ti) * iqerr - iqerr_prev);
+
+    if(uref.D < -vdc) uref.D = -vdc;
+    if(uref.Q < -vdc) uref.Q = -vdc;
+    if(uref.D > vdc) uref.D = vdc;
+    if(uref.Q > vdc) uref.Q = vdc;
+
+    iderr_prev = iderr;
+    iqerr_prev = iqerr;
+
+    DQ ureff;
+    ureff.D = uref.D - (Omega * ls * CurrentDQ.Q);
+    ureff.Q = uref.Q + (Omega * ls * CurrentDQ.D);
+
+    UVW dutyUVW;
+    AB refAB;
+    //refAB.A = 3.0f * arm_cos_f32 (Theta);
+    //refAB.B = 3.0f * arm_sin_f32 (Theta);
+    sinval = arm_sin_f32 (Theta);
+    cosval = arm_cos_f32 (Theta);
+    arm_inv_park_f32 (ureff.D, ureff.Q, &(refAB.A), &(refAB.B), sinval, cosval);
+    arm_inv_park_f32 (ureff.D, ureff.Q, &(refAB.A), &(refAB.B), sinval, cosval);
+
+    SVPWM_Calc (&refAB, vdc, &dutyUVW);
+    //float32_t arg;
+    //arg = atan2LUT(ab.B, ab.A);           // takes <1.67us
+    //float32_t arg = atan2f(ab.B, ab.A);
+    //LL_DAC_ConvertData12RightAligned (DAC1, LL_DAC_CHANNEL_1, 2048 + (arg * 400.0f));
+    //auto d = SanitizeDuty(dutyUVW.V, 1000 - 1, 950);
+    //LL_DAC_ConvertData12RightAligned (DAC1, LL_DAC_CHANNEL_1, d * 4.098f);
+
+    TIM1->CCR1 = SanitizeDuty(dutyUVW.U, 1000 - 1, 950);//uvw.U * 1000.0f;
+    TIM1->CCR2 = SanitizeDuty(dutyUVW.V, 1000 - 1, 950);
+    TIM1->CCR3 = SanitizeDuty(dutyUVW.W, 1000 - 1, 950);
+
 }
 
 /* USER CODE END 0 */
@@ -312,8 +398,8 @@ int main (void)
     /* USER CODE BEGIN 2 */
 
     /* DMA1_Channel1_IRQn interrupt configuration */
-    NVIC_SetPriority (DMA1_Channel1_IRQn, NVIC_EncodePriority (NVIC_GetPriorityGrouping (), 1, 0));
-    NVIC_EnableIRQ (DMA1_Channel1_IRQn);
+    //NVIC_SetPriority (DMA1_Channel1_IRQn, NVIC_EncodePriority (NVIC_GetPriorityGrouping (), 1, 0));
+    //NVIC_EnableIRQ (DMA1_Channel1_IRQn);
 
     prints ("Starting Self-Cal...");
 
@@ -347,7 +433,7 @@ int main (void)
     //HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_3);
     //TIM1->CCR4 = 995;
 
-    // @1kHz
+    // @1.8kHz
     NVIC_SetPriority (TIM6_DAC_IRQn, NVIC_EncodePriority (NVIC_GetPriorityGrouping (), 1, 0));
     NVIC_EnableIRQ (TIM6_DAC_IRQn);
     LL_TIM_EnableCounter (TIM6);
@@ -357,14 +443,25 @@ int main (void)
     LL_ADC_INJ_StartConversion (ADC1);
     /* USER CODE END 2 */
 
+    while(Tick_ms < 500)
+        ;
+
+    OmegaRef = 5.0f*314.16f;
+
     /* Infinite loop */
     /* USER CODE BEGIN WHILE */
-    while (1)
+    while (Tick_ms < 1500)
     {
-        sprintf (text, "%07.4f, %07.3f, %07.3f\r\n", Omega, PhaseCurrent[0], PhaseCurrent[1]);
+        //continue;
+        sprintf (text, "%05d, %010.4f, %07.3f, %07.3f\r\n", Tick_ms, (float32_t)(OmegaCntFiltered * 72e6f), (float32_t)CurrentDQ.D, (float32_t)CurrentDQ.Q);
         prints (text);
-        Delay_ms (1);
+        //Delay_ms (1);
     }
+
+    //OmegaRef = 0.0f;
+
+    while(1) ;
+
     /* USER CODE END 3 */
 }
 
@@ -583,9 +680,9 @@ static void ConfigureTIM6 (void)
     /* Peripheral clock enable */
     LL_APB1_GRP1_EnableClock (LL_APB1_GRP1_PERIPH_TIM6);
 
-    TIM_InitStruct.Prescaler = 72 - 1;
+    TIM_InitStruct.Prescaler = 1000 - 1;
     TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
-    TIM_InitStruct.Autoreload = 100 - 1;
+    TIM_InitStruct.Autoreload = 40 - 1;
     TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV1;
     LL_TIM_Init (TIM6, &TIM_InitStruct);
     LL_TIM_EnableARRPreload (TIM6);

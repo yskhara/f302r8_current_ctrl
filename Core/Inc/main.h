@@ -64,8 +64,7 @@ extern "C" {
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
 
-#define Q31(x) ((q31_t)((x) * 2147483648))
-#define Q31_TO_F(x) ((float32_t)(x) / 2147483648)
+void prints (const char *const str);
 
 /* USER CODE END EM */
 

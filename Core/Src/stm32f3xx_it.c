@@ -261,8 +261,15 @@ void ADC1_IRQHandler (void)
     if (LL_ADC_IsActiveFlag_JEOS (ADC1) != 0)
     {
         LL_ADC_ClearFlag_JEOS (ADC1);
+        //GPIOB->BSRR = GPIO_BSRR_BS_2;
         Adc1InjConvComplete_Callback ();
+        //GPIOB->BSRR = GPIO_BSRR_BR_2;
     }
+}
+
+void WWDG_IRQHandler(void)
+{
+    prints("WWDGIRQ\r\n");
 }
 /* USER CODE END 1 */
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
